@@ -1,0 +1,75 @@
+# Environment variables - never commit these
+.env
+.env.*
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.pyc
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# Playwright browsers
+playwright/.local-browsers/
+
+# Logs
+logs/
+*.log
+
+# Scrapers - run locally only, not needed on Railway
+kaufland_scraper.py
+billa_scraper.py
+tmarket_scraper.py
+lidl_scraper.py
+deduplicate_products.py
+backfill_categories.py
+run_scrapers.bat
+
+# Database setup - run once manually, not needed on Railway
+setup_database.py
+migrate_v2.py
+
+# Inspection/debug scripts
+*_inspect.py
+*_debug.py
+test_*.py
+list_models.py
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Android project - separate repo recommended
+android/
+SupermarketDeals-Android.zip
