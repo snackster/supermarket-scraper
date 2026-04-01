@@ -29,6 +29,9 @@ from typing import Optional
 
 import psycopg2
 import psycopg2.extras
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import psycopg2.pool
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -165,6 +168,11 @@ class AlertDelete(BaseModel):
 class UpdateCityRequest(BaseModel):
     city: str
 
+class UpdateNotificationPrefsRequest(BaseModel):
+    notify_email: bool
+    notify_push: bool
+    fcm_token: Optional[str] = None
+
 # ── SHARED HELPERS ────────────────────────────────────────────────────────────
 
 def get_available_stores(cur, city: str) -> list[str]:
@@ -275,6 +283,50 @@ def update_city(req: UpdateCityRequest, user=Depends(get_current_user)):
         cur.execute("UPDATE users SET city = %s WHERE id = %s", (req.city, user["id"]))
         conn.commit()
         return {"message": "City updated", "city": req.city}
+    finally:
+        conn.close()
+
+
+@app.get("/me")
+def get_me(user=Depends(get_current_user)):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, email, city, notify_email, notify_push, fcm_token FROM users WHERE id = %s",
+            (user["id"],)
+        )
+        u = cur.fetchone()
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {
+            "id": u["id"],
+            "email": u["email"],
+            "city": u["city"],
+            "notify_email": u["notify_email"],
+            "notify_push": u["notify_push"],
+            "fcm_token": u["fcm_token"],
+        }
+    finally:
+        conn.close()
+
+
+@app.put("/me/notifications")
+def update_notification_prefs(
+    req: UpdateNotificationPrefsRequest,
+    user=Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE users
+               SET notify_email = %s, notify_push = %s, fcm_token = COALESCE(%s, fcm_token)
+               WHERE id = %s""",
+            (req.notify_email, req.notify_push, req.fcm_token, user["id"])
+        )
+        conn.commit()
+        return {"message": "Notification preferences updated"}
     finally:
         conn.close()
 
