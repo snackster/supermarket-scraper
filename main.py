@@ -29,6 +29,7 @@ from typing import Optional
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,21 +75,35 @@ app.add_middleware(
 
 # ── DATABASE ──────────────────────────────────────────────────────────────────
 
-def get_db():
-    # Railway provides DATABASE_URL; local dev uses individual vars
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        # Railway uses postgresql:// but psycopg2 needs postgresql://
-        database_url = database_url.replace("postgres://", "postgresql://", 1)
-        return psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", 5432)),
-        dbname=os.getenv("DB_NAME", "supermarket_deals"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", ""),
-        cursor_factory=psycopg2.extras.RealDictCursor,
+def _build_dsn() -> str:
+    """Build the database connection string from env vars."""
+    url = os.getenv("DATABASE_URL", "")
+    if url:
+        return url.replace("postgres://", "postgresql://", 1)
+    return (
+        f"postgresql://{os.getenv('DB_USER','postgres')}"
+        f":{os.getenv('DB_PASSWORD','')}"
+        f"@{os.getenv('DB_HOST','localhost')}"
+        f":{os.getenv('DB_PORT','5432')}"
+        f"/{os.getenv('DB_NAME','supermarket_deals')}"
     )
+
+def get_db():
+    """Get a database connection. Retries once on failure (handles cold starts)."""
+    dsn = _build_dsn()
+    for attempt in range(2):
+        try:
+            return psycopg2.connect(
+                dsn,
+                cursor_factory=psycopg2.extras.RealDictCursor,
+                connect_timeout=10,
+            )
+        except psycopg2.OperationalError:
+            if attempt == 0:
+                import time
+                time.sleep(2)
+            else:
+                raise
 
 # ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 
@@ -571,3 +586,8 @@ def health():
         return {"status": "ok", "time": datetime.now().isoformat()}
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+@app.get("/ping")
+def ping():
+    """Lightweight endpoint for keep-alive pings. No DB call."""
+    return {"pong": True}

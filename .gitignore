@@ -73,3 +73,6 @@ desktop.ini
 # Android project - separate repo recommended
 android/
 SupermarketDeals-Android.zip
+
+# Railway (not using)
+railway.json
