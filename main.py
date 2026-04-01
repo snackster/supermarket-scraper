@@ -348,14 +348,20 @@ def home(user=Depends(get_current_user)):
         for category in CATEGORIES:
             cur.execute(
                 """
-                SELECT DISTINCT ON (p.id)
-                    p.id, p.name, p.category, p.image_url
+                SELECT p.id, p.name, p.category, p.image_url
                 FROM products p
-                JOIN store_offers so ON so.product_id = p.id
                 WHERE p.category = %s
-                  AND so.is_active = TRUE
-                  AND so.store = ANY(%s)
-                ORDER BY p.id
+                  AND EXISTS (
+                    SELECT 1 FROM store_offers so
+                    WHERE so.product_id = p.id
+                      AND so.is_active = TRUE
+                      AND so.store = ANY(%s)
+                  )
+                ORDER BY (
+                    SELECT MAX(so.discount_pct)
+                    FROM store_offers so
+                    WHERE so.product_id = p.id AND so.is_active = TRUE
+                ) DESC NULLS LAST
                 LIMIT 10
                 """,
                 (category, stores),
@@ -436,11 +442,25 @@ def get_category(
 
         cur.execute(
             """
-            SELECT DISTINCT ON (p.id) p.id, p.name, p.category, p.image_url
+            SELECT p.id, p.name, p.category, p.image_url
             FROM products p
-            JOIN store_offers so ON so.product_id = p.id
-            WHERE p.category = %s AND so.is_active = TRUE AND so.store = ANY(%s)
-            ORDER BY p.id
+            WHERE p.category = %s
+              AND EXISTS (
+                SELECT 1 FROM store_offers so
+                WHERE so.product_id = p.id
+                  AND so.is_active = TRUE
+                  AND so.store = ANY(%s)
+              )
+            ORDER BY (
+                SELECT MAX(so.discount_pct)
+                FROM store_offers so
+                WHERE so.product_id = p.id AND so.is_active = TRUE
+            ) DESC NULLS LAST,
+            (
+                SELECT MIN(so.price_eur)
+                FROM store_offers so
+                WHERE so.product_id = p.id AND so.is_active = TRUE
+            ) ASC
             LIMIT %s OFFSET %s
             """,
             (category_name, stores, page_size, offset),
@@ -647,6 +667,53 @@ def delete_alert(alert: AlertDelete, user=Depends(get_current_user)):
         conn.close()
 
 # ── HEALTH ────────────────────────────────────────────────────────────────────
+
+@app.get("/alerts")
+def get_alerts(user=Depends(get_current_user)):
+    """Get all active alert subscriptions for the current user."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        city   = get_user_city(cur, user["id"])
+        stores = get_available_stores(cur, city)
+
+        cur.execute(
+            """
+            SELECT
+                a.id AS alert_id,
+                p.id, p.name, p.category, p.image_url,
+                a.created_at
+            FROM alert_subscriptions a
+            JOIN products p ON p.id = a.product_id
+            WHERE a.user_id = %s AND a.is_active = TRUE
+            ORDER BY a.created_at DESC
+            """,
+            (user["id"],),
+        )
+        alerts = cur.fetchall()
+
+        product_ids = [a["id"] for a in alerts]
+        offers_map  = fetch_offers(cur, product_ids, stores)
+
+        results = []
+        for alert in alerts:
+            offers = offers_map.get(alert["id"], [])
+            results.append({
+                "alert_id":   alert["alert_id"],
+                "id":         alert["id"],
+                "name":       alert["name"],
+                "category":   alert["category"],
+                "image_url":  alert["image_url"],
+                "best_price_eur":    min((o["price_eur"] for o in offers if o["price_eur"]), default=None),
+                "best_discount_pct": max((o["discount_pct"] for o in offers if o["discount_pct"]), default=None),
+                "offers":     offers,
+                "created_at": alert["created_at"].isoformat() if alert["created_at"] else None,
+            })
+
+        return {"alerts": results}
+    finally:
+        conn.close()
+
 
 @app.get("/health")
 def health():
