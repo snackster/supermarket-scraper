@@ -421,6 +421,7 @@ def get_category(
 def search(
     q: str = Query(..., min_length=1),
     limit: int = Query(50, ge=1, le=200),
+    strict: bool = Query(True),
     user=Depends(get_current_user),
 ):
     conn = get_db()
@@ -429,18 +430,35 @@ def search(
         city   = get_user_city(cur, user["id"])
         stores = get_available_stores(cur, city)
 
-        cur.execute(
-            """
-            SELECT p.id, p.name, p.category, p.image_url
-            FROM products p
-            WHERE p.name ILIKE %s
-               OR similarity(p.name, %s) > 0.2
-               OR to_tsvector('simple', p.name) @@ plainto_tsquery('simple', %s)
-            ORDER BY similarity(p.name, %s) DESC, p.name
-            LIMIT %s
-            """,
-            (f"%{q}%", q, q, q, limit),
-        )
+        # Strict mode: only ILIKE match (all query words must appear in name)
+        if strict:
+            # All words must appear in name (exact word matching)
+            words = q.strip().split()
+            conditions = " AND ".join(["p.name ILIKE %s"] * len(words))
+            like_params = [f"%{w}%" for w in words]
+            cur.execute(
+                f"""
+                SELECT p.id, p.name, p.category, p.image_url
+                FROM products p
+                WHERE {conditions}
+                ORDER BY p.name
+                LIMIT %s
+                """,
+                like_params + [limit],
+            )
+        else:
+            cur.execute(
+                """
+                SELECT p.id, p.name, p.category, p.image_url
+                FROM products p
+                WHERE p.name ILIKE %s
+                   OR similarity(p.name, %s) > 0.3
+                   OR to_tsvector('simple', p.name) @@ plainto_tsquery('simple', %s)
+                ORDER BY similarity(p.name, %s) DESC, p.name
+                LIMIT %s
+                """,
+                (f"%{q}%", q, q, q, limit),
+            )
         products   = cur.fetchall()
         pids       = [p["id"] for p in products]
         offers_map = fetch_offers(cur, pids, stores)

@@ -45,6 +45,7 @@ lidl_scraper.py
 deduplicate_products.py
 backfill_categories.py
 run_scrapers.bat
+enrich_images.py
 
 # Database setup - run once manually, not needed on Railway
 setup_database.py
