@@ -34,7 +34,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import psycopg2.pool
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -58,10 +58,15 @@ CATEGORIES = [
     "Плодове и зеленчуци",
     "Хляб и тестени",
     "Напитки",
+    "Алкохол",
     "Сладкиши и снакс",
     "Замразени",
     "Домакинство и козметика",
     "Консерви и основни",
+    "Бебешки продукти",
+    "Здравословни храни",
+    "Грижа за домашни любимци",
+    "Техника",
     "Друго",
 ]
 
@@ -229,6 +234,13 @@ def get_user_city(cur, user_id: int) -> str:
     row = cur.fetchone()
     return row["city"] if row else ""
 
+def get_city_for_request(cur, user, request) -> str:
+    """Get city from logged-in user or guest header."""
+    if user:
+        return get_user_city(cur, user["id"])
+    # Guest mode — city passed in header
+    return request.headers.get("X-Guest-City", "София")
+
 # ── AUTH ENDPOINTS ────────────────────────────────────────────────────────────
 
 @app.post("/register", status_code=201)
@@ -333,12 +345,12 @@ def update_notification_prefs(
 # ── HOME ──────────────────────────────────────────────────────────────────────
 
 @app.get("/home")
-def home(user=Depends(get_current_user)):
+def home(request: Request, user=Depends(get_optional_user)):
     """10 best-discount products per category, filtered to user's city stores."""
     conn = get_db()
     try:
         cur = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
 
         if not stores:
@@ -386,11 +398,11 @@ def home(user=Depends(get_current_user)):
 # ── CATEGORIES ────────────────────────────────────────────────────────────────
 
 @app.get("/categories")
-def list_categories(user=Depends(get_current_user)):
+def list_categories(request: Request, user=Depends(get_optional_user)):
     conn = get_db()
     try:
         cur    = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
 
         result = []
@@ -415,9 +427,10 @@ def list_categories(user=Depends(get_current_user)):
 @app.get("/categories/{category_name}")
 def get_category(
     category_name: str,
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    user=Depends(get_current_user),
+    user=Depends(get_optional_user),
 ):
     if category_name not in CATEGORIES:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -425,7 +438,7 @@ def get_category(
     conn = get_db()
     try:
         cur    = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
         offset = (page - 1) * page_size
 
@@ -492,14 +505,15 @@ def get_category(
 @app.get("/search")
 def search(
     q: str = Query(..., min_length=1),
+    request: Request = None,
     limit: int = Query(50, ge=1, le=200),
     strict: bool = Query(True),
-    user=Depends(get_current_user),
+    user=Depends(get_optional_user),
 ):
     conn = get_db()
     try:
         cur    = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
 
         # Strict mode: only ILIKE match (all query words must appear in name)
@@ -549,11 +563,11 @@ def search(
 # ── PRODUCT DETAIL ────────────────────────────────────────────────────────────
 
 @app.get("/product/{product_id}")
-def get_product(product_id: int, user=Depends(get_current_user)):
+def get_product(product_id: int, request: Request, user=Depends(get_optional_user)):
     conn = get_db()
     try:
         cur    = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
 
         cur.execute(
@@ -674,7 +688,7 @@ def get_alerts(user=Depends(get_current_user)):
     conn = get_db()
     try:
         cur = conn.cursor()
-        city   = get_user_city(cur, user["id"])
+        city   = get_city_for_request(cur, user, request)
         stores = get_available_stores(cur, city)
 
         cur.execute(
