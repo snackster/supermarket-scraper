@@ -83,28 +83,37 @@ app.add_middleware(
 
 # ── DATABASE ──────────────────────────────────────────────────────────────────
 
-def _build_dsn() -> str:
-    """Build the database connection string from env vars."""
+def _build_dsn() -> dict:
+    """Build the database connection kwargs from env vars."""
+    from urllib.parse import urlparse, unquote
     url = os.getenv("DATABASE_URL", "")
     if url:
-        return url.replace("postgres://", "postgresql://", 1)
-    return (
-        f"postgresql://{os.getenv('DB_USER','postgres')}"
-        f":{os.getenv('DB_PASSWORD','')}"
-        f"@{os.getenv('DB_HOST','localhost')}"
-        f":{os.getenv('DB_PORT','5432')}"
-        f"/{os.getenv('DB_NAME','supermarket_deals')}"
+        url = url.replace("postgres://", "postgresql://", 1)
+        parsed = urlparse(url)
+        return dict(
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            dbname=parsed.path.lstrip("/"),
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+        )
+    return dict(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "5432")),
+        dbname=os.getenv("DB_NAME", "supermarket_deals"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", ""),
     )
 
 def get_db():
     """Get a database connection. Retries once on failure (handles cold starts)."""
-    dsn = _build_dsn()
+    kwargs = _build_dsn()
     for attempt in range(2):
         try:
             return psycopg2.connect(
-                dsn,
                 cursor_factory=psycopg2.extras.RealDictCursor,
                 connect_timeout=10,
+                **kwargs,
             )
         except psycopg2.OperationalError:
             if attempt == 0:
