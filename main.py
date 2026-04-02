@@ -590,11 +590,14 @@ def get_product(product_id: int, request: Request, user=Depends(get_optional_use
         offers_map = fetch_offers(cur, [product_id], stores)
         offers     = offers_map.get(product_id, [])
 
-        cur.execute(
-            "SELECT id FROM alert_subscriptions WHERE product_id=%s AND user_id=%s AND is_active=TRUE",
-            (product_id, user["id"]),
-        )
-        has_alert = cur.fetchone() is not None
+        if user:
+            cur.execute(
+                "SELECT id FROM alert_subscriptions WHERE product_id=%s AND user_id=%s AND is_active=TRUE",
+                (product_id, user["id"]),
+            )
+            has_alert = cur.fetchone() is not None
+        else:
+            has_alert = False
 
         return {
             "id":          product["id"],
