@@ -354,16 +354,30 @@ def update_notification_prefs(
 # ── HOME ──────────────────────────────────────────────────────────────────────
 
 @app.get("/home")
-def home(request: Request, user=Depends(get_optional_user)):
-    """10 best-discount products per category, filtered to user's city stores."""
+def home(
+    request: Request,
+    stores: Optional[str] = Query(None, description="Comma-separated store names, e.g. Kaufland,Lidl,Billa"),
+    user=Depends(get_optional_user),
+):
+    """10 best-discount products per category, filtered to user's city stores
+    and optionally to specific store names."""
     conn = get_db()
     try:
         cur = conn.cursor()
-        city   = get_city_for_request(cur, user, request)
-        stores = get_available_stores(cur, city)
-
-        if not stores:
+        city = get_city_for_request(cur, user, request)
+        available = get_available_stores(cur, city)
+        if not available:
             return {"city": city, "categories": []}
+
+        # If store filter provided, intersect with available stores
+        if stores:
+            requested = [s.strip() for s in stores.split(",") if s.strip()]
+            filtered = [s for s in requested if s in available]
+        else:
+            filtered = available
+
+        if not filtered:
+            return {"city": city, "available_stores": available, "categories": []}
 
         result = []
         for category in CATEGORIES:
@@ -385,22 +399,19 @@ def home(request: Request, user=Depends(get_optional_user)):
                 ) DESC NULLS LAST
                 LIMIT 10
                 """,
-                (category, stores),
+                (category, filtered),
             )
-            products   = cur.fetchall()
-            pids       = [p["id"] for p in products]
-            offers_map = fetch_offers(cur, pids, stores)
-
+            products = cur.fetchall()
+            pids = [p["id"] for p in products]
+            offers_map = fetch_offers(cur, pids, filtered)
             cards = [
                 product_card(dict(p), offers_map.get(p["id"], []))
                 for p in products
                 if offers_map.get(p["id"])
             ]
             cards.sort(key=lambda x: x["best_discount_pct"] or 0, reverse=True)
-
             result.append({"category": category, "products": cards})
-
-        return {"city": city, "available_stores": stores, "categories": result}
+        return {"city": city, "available_stores": available, "categories": result}
     finally:
         conn.close()
 
@@ -517,17 +528,22 @@ def search(
     request: Request = None,
     limit: int = Query(50, ge=1, le=200),
     strict: bool = Query(True),
+    stores: Optional[str] = Query(None, description="Comma-separated store names, e.g. Kaufland,Lidl,Billa"),
     user=Depends(get_optional_user),
 ):
     conn = get_db()
     try:
         cur    = conn.cursor()
         city   = get_city_for_request(cur, user, request)
-        stores = get_available_stores(cur, city)
+        available = get_available_stores(cur, city)
 
-        # Strict mode: only ILIKE match (all query words must appear in name)
+        if stores:
+            requested = [s.strip() for s in stores.split(",") if s.strip()]
+            filtered = [s for s in requested if s in available]
+        else:
+            filtered = available
+
         if strict:
-            # All words must appear in name (exact word matching)
             words = q.strip().split()
             conditions = " AND ".join(["p.name ILIKE %s"] * len(words))
             like_params = [f"%{w}%" for w in words]
@@ -556,15 +572,13 @@ def search(
             )
         products   = cur.fetchall()
         pids       = [p["id"] for p in products]
-        offers_map = fetch_offers(cur, pids, stores)
-
+        offers_map = fetch_offers(cur, pids, filtered)
         results = [
             product_card(dict(p), offers_map.get(p["id"], []))
             for p in products
             if offers_map.get(p["id"])
         ]
         results.sort(key=lambda x: x["best_discount_pct"] or 0, reverse=True)
-
         return {"query": q, "count": len(results), "results": results}
     finally:
         conn.close()
